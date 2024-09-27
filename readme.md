@@ -3,9 +3,12 @@
 ## 1. Run Calibration
 
 
-```
-run calibration.ipynb
-```
+Start with Data:
+- `data/`
+    - `raw_data/`: contains raw data for each frame
+    - `meta_data/`: contains meta data for each camera
+
+Run the `calibration.ipynb` notebook to get calibration results
 
 Basic functions:
 - `generate_png_from_raw`: generate png from raw
