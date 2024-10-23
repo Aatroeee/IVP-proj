@@ -2,3 +2,6 @@
 __pycache__/
 data/
 tmp_dense/
+code/mast3r/
+data_old/
+weights/

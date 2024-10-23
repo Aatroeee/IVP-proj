@@ -213,3 +213,18 @@ if __name__ == '__main__':
             np.savetxt(args.save_H, final_transformations[-1])
     else:
         print("Skipping global and colored registration as transformation matrix is provided.")
+
+
+if __name__ == "__main__":
+    print("running")
+    # build masked pcd
+    root_path = 'data'
+    output_path = os.path.join('data', 'pcd_data')
+    frame_id = str(50).zfill(7)
+    cam_list = list(cam_series.keys())
+    cam_list = [cam for cam in cam_list if cam not in camera_set[8]]
+    for cam in cam_list:
+        print(cam)
+        test_serie = cam_series[cam]
+        info = read_data(root_path, cam_series[cam], frame_id, need_depth=True, mask_path=os.path.join('data', 'masked_imgs','masks'))
+        build_point_cloud_from_depth_downsampled(info, far_clip=2, downsample_step=2, output_path=os.path.join('data', 'masked_pcd_data',))
