@@ -1,4 +1,6 @@
 # ignore all files in data
+__MACOSX/
 __pycache__/
 data/
+res/
 tmp_dense/
