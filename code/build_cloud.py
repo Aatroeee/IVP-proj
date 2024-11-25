@@ -94,7 +94,7 @@ if __name__ == "__main__":
     # build pcd directly
 
     root_path = 'data'
-    output_path = 'tmp_dense_shift'
+    output_path = 'point_clouds'
     downsample_step = 4
     if not os.path.exists(output_path):
         os.mkdir(output_path)

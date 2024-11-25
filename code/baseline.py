@@ -8,6 +8,10 @@ import argparse
 import torch
 from scipy.spatial import KDTree
 
+from detectron2.engine import DefaultPredictor
+from detectron2.config import get_cfg
+from detectron2 import model_zoo
+
 
 from read_depth_and_build_pcd import read_depth_image, read_color_image, build_point_cloud_from_depth
 from cam_settings import cam_series
@@ -31,9 +35,53 @@ for i, cam in enumerate(id2cam):
 keyframe_list = np.array([240, 220, 200, 175, 145, 110, 80, 50]) # keyframe - each group can capture front view of chessboard
 verbose = 0
 
+def setup_maskrcnn():
+    """
+    Configure Mask R-CNN with Detectron2 for COCO-trained models.
+    """
+    cfg = get_cfg()
+    cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
+    cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # Set confidence threshold
+    cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    return DefaultPredictor(cfg)
+
+
+predictor =  setup_maskrcnn()
+
+def generate_image_mask(image_array, predictor):
+    """
+    Generate and return the mask for a single person in the image provided as a NumPy array.
+
+    Args:
+        image_array (np.ndarray): The input image as a NumPy array (H, W, C).
+        predictor: Mask R-CNN predictor configured with Detectron2.
+
+    Returns:
+        np.ndarray: A binary mask (NumPy array) for the detected person.
+    """
+    if image_array is None or len(image_array.shape) != 3:
+        raise ValueError("Invalid image input. Provide a valid 3-channel NumPy array.")
+
+    # Perform inference
+    outputs = predictor(image_array)
+
+    # Extract the mask for the single person (class 0 in COCO)
+    instances = outputs["instances"]
+    human_indices = (instances.pred_classes == 0).nonzero(as_tuple=True)[0]
+
+    breakpoint()
+
+    if len(human_indices) == 0:
+        raise ValueError("No person detected in the image.")
+
+    # Use the first detected human mask
+    mask = instances.pred_masks[human_indices[0]].cpu().numpy()
+
+    return mask
 
 # read data from raw and meta data
-def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask_path = None, near_clip=0.5, far_clip=3.0):
+def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask =True , near_clip=0.5, far_clip=3.0):
     meta_path = os.path.join(root_path, 'meta_data', f'{cam_series_id}-MODEL.json')
     frame_str = str(frame_id).zfill(7)
     depth_path = os.path.join(root_path, 'raw_data', frame_str, f'{cam_series_id}-DEPTH.{frame_str}.raw')
@@ -98,12 +146,13 @@ def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask_path =
         depth_to_color_warped_pixels = depth_to_color_warped_pixels[:, :] / depth_to_color_warped_pixels[:, 2:]
         depth_to_color_warped_pixels = depth_to_color_warped_pixels[:, :2]
     
-    mask = None
-    if mask_path is not None:
-        img_id = cam2id[cam_series_id[-4:]]
-        cam_mask_path = os.path.join(mask_path, f'mask_{img_id:02d}.png')
-        mask = cv2.imread(cam_mask_path, cv2.IMREAD_GRAYSCALE)
-        mask = mask>128
+    if mask:
+        image_mask = generate_image_mask(rgb_img, predictor)
+        image_mask = image_mask.astype("uint8") * 255
+        # img_id = cam2id[cam_series_id[-4:]]
+        # cam_mask_path = os.path.join(mask_path, f'mask_{img_id:02d}.png')
+        # mask = cv2.imread(cam_mask_path, cv2.IMREAD_GRAYSCALE)
+        # mask = mask>128
       
   
     return dict(
@@ -122,7 +171,7 @@ def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask_path =
         depth_intrinsics = intrinsic_matrix,
         
         color_offset_extrinsics = extrinsics,
-        mask = mask
+        mask = image_mask
     )
 
 

@@ -6,3 +6,6 @@ code/mast3r/
 data_old/
 weights/
 tmp_dense_shift/
+masked_pcs/
+camera_poses/
+point_clouds/

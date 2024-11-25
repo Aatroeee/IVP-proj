@@ -32,6 +32,7 @@ def save_registration_result_color_multi(sources, target, transformations, outpu
 
     for i in range(len(sources)):
         source_temp = copy.deepcopy(sources[i])
+        # breakpoint()
         source_temp.transform(transformations[i])
         geometries.append(copy.deepcopy(source_temp))
         combined_point_cloud += source_temp
@@ -41,12 +42,12 @@ def save_registration_result_color_multi(sources, target, transformations, outpu
 
 if __name__ =="__main__":
     frame_id = str(50).zfill(7)
-    pcd_path = f'tmp_dense/{frame_id}'
-    trans_path = 'data/output_data_calib_r2d2'
+    pcd_path = f'point_clouds/{frame_id}'
+    trans_path = 'data/output_data_calib_pnpr2d2'
     target_id = '1246'
     source_id = [cam_id for cam_id in list(cam_series.keys()) if cam_id not in camera_set[8]]
     target_input = read_pcd_and_trans(target_id, pcd_path, trans_path)
     source_input = [read_pcd_and_trans(sid, pcd_path, trans_path, target_id) for sid in source_id]
     source_pcd = [sinfo['pcd'] for sinfo in source_input]
     source_trans = [sinfo['trans'] for sinfo in source_input]
-    save_registration_result_color_multi(source_pcd, target_input['pcd'],source_trans, f'data/combined_pcd_{target_id}.ply')
+    save_registration_result_color_multi(source_pcd, target_input['pcd'],source_trans, f'data/combined_pcd_pnpr2d2{target_id}.ply')

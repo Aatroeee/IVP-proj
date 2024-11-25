@@ -92,7 +92,7 @@ if __name__ == "__main__":
             )
         )
     root_path = 'data'
-    output_path = 'data/output_data'
+    output_path = 'data/output_data_best'
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for cali_set in cali_sequence:
