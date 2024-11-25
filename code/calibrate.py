@@ -279,20 +279,8 @@ def valid_camera_series(file_path):
     return  valid 
 
 
-def compute_camera_pose(source_image, target_image, K_source, K_target, plot_matches=False):
-    """
-    Compute the camera pose between a source and target camera using SIFT.
-    
-    Args:
-        source_image (np.ndarray): Image from the source camera (grayscale).
-        target_image (np.ndarray): Image from the target camera (grayscale).
-        K_source (np.ndarray): Intrinsic matrix of the source camera.
-        K_target (np.ndarray): Intrinsic matrix of the target camera.
-        plot_matches (bool): Whether to plot matches between the two images.
-    
-    Returns:
-        tuple: Relative rotation (R) and translation (T) between the source and target cameras.
-    """
+def compute_camera_pose(source_image, target_image, source_info, target_info, plot_matches=False):
+
     # Initialize SIFT
     sift = cv2.SIFT_create()
 
@@ -315,12 +303,12 @@ def compute_camera_pose(source_image, target_image, K_source, K_target, plot_mat
     points_target = np.float32([keypoints_target[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
     
     # Compute the Essential Matrix
-    E, mask = cv2.findEssentialMat(points_source, points_target, K_source, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+    E, mask = cv2.findEssentialMat(points_source, points_target,  source_info['intrinsics'],source_info['distortion'],target_info['intrinsics'],target_info['distortion'],method=cv2.RANSAC, prob=0.999, threshold=1.0)
 
     # draw_epipolar_lines(source_image, target_image, points_source, points_target, E)
     
     # Recover the pose (R and T) from the Essential Matrix
-    _, R, T, mask_pose = cv2.recoverPose(E, points_source, points_target, K_source)
+    _, R, T, mask_pose = cv2.recoverPose(E, points_source, points_target, target_info['intrinsics'])
     
     # Plot matches if requested
     if plot_matches:
@@ -435,57 +423,6 @@ def stitch_images(source_image, target_image, K_source, K_target, RT):
     return stitched
 
 
-# def draw_epipolar_lines(img1, img2, points1, points2, F):
-#     """Draws corresponding epipolar lines on img1 and img2 using points1 and points2 with the fundamental matrix F.
-
-#     Args:
-#         img1 (ndarray): The first image.
-#         img2 (ndarray): The second image.
-#         points1 (ndarray): Points in the first image.
-#         points2 (ndarray): Points in the second image.
-#         F (ndarray): The fundamental matrix.
-#     """
-#     # Convert images to color for drawing lines
-#     img1_color = cv2.cvtColor(img1, cv2.COLOR_GRAY2BGR) if len(img1.shape) == 2 else img1
-#     img2_color = cv2.cvtColor(img2, cv2.COLOR_GRAY2BGR) if len(img2.shape) == 2 else img2
-
-#     # Compute the epipolar lines in both images
-#     lines1 = cv2.computeCorrespondEpilines(points2.reshape(-1, 1, 2), 2, F).reshape(-1, 3)
-#     lines2 = cv2.computeCorrespondEpilines(points1.reshape(-1, 1, 2), 1, F).reshape(-1, 3)
-
-#     # Generate a set of colors for each corresponding pair
-#     colors = [tuple(np.random.randint(0, 255, 3).tolist()) for _ in range(len(points1))]
-
-#     # Draw lines and points on img1
-#     for r, pt1, color in zip(lines1, points1.squeeze(), colors):
-#         # breakpoint()
-#         x0, y0 = map(int, [0, -r[2] / r[1]])
-#         x1, y1 = map(int, [img1.shape[1], -(r[2] + r[0] * img1.shape[1]) / r[1]])
-#         img1_color = cv2.line(img1_color, (x0, y0), (x1, y1), color, 5)
-#         img1_color = cv2.circle(img1_color, (int(pt1[0]), int(pt1[1])), 6, tuple(color), 5)
-
-#     # Draw lines and points on img2
-#     for r, pt2, color in zip(lines2, points2.squeeze(), colors):
-#         x0, y0 = map(int, [0, -r[2] / r[1]])
-#         x1, y1 = map(int, [img2.shape[1], -(r[2] + r[0] * img2.shape[1]) / r[1]])
-#         img2_color = cv2.line(img2_color, (x0, y0), (x1, y1), color, 5)
-#         img2_color = cv2.circle(img2_color, (int(pt2[0]), int(pt2[1])), 6, tuple(color), 5)
-
-#     # Plot both images on the same figure
-#     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-#     ax[0].imshow(cv2.cvtColor(img1_color, cv2.COLOR_BGR2RGB))
-#     ax[0].set_title('Image 1 with Epipolar Lines')
-#     ax[0].axis('off')  # Hide axes
-
-#     ax[1].imshow(cv2.cvtColor(img2_color, cv2.COLOR_BGR2RGB))
-#     ax[1].set_title('Image 2 with Epipolar Lines')
-#     ax[1].axis('off')  # Hide axes
-
-#     plt.tight_layout()
-#     plt.savefig("epipole_lines.png")
-
-
-
 def build_point_clouds(cam_list, root_path, output_path="/scratch/projects/fouheylab/dma9300/recon3d/masked_pcs/"):
     for cam_id in cam_list:
         info = read_data(root_path, cam_id, need_depth = True, mask = True, near_clip = 0.5, far_clip = 3.0)
@@ -500,21 +437,18 @@ if __name__ == "__main__":
     cam_list  = sorted(list(cam_series))
     # build_point_clouds(cam_list, root_path)
 
-    source_cam_info = read_data(root_path, cam_list[0], need_depth = True, mask = True, near_clip = 0.5, far_clip = 3.0)
-    target_cam_list = cam_list[1:]
+    target_cam_info = read_data(root_path, cam_list[0], need_depth = True, mask = True, near_clip = 0.5, far_clip = 3.0)
+    source_cam_list = cam_list[1:]
 
-    for cam_id  in target_cam_list:
-        target_cam_info = read_data(root_path, cam_id,  need_depth = True, mask =True , near_clip=0.5, far_clip=3.0)
-        if target_cam_info["mask"] is  not None:
+    for cam_id  in source_cam_list:
+        source_cam_info = read_data(root_path, cam_id,  need_depth = True, mask =True , near_clip=0.5, far_clip=3.0)
+        if source_cam_info["mask"] is  not None:
             target_image  = apply_mask(target_cam_info["rgb_img"], target_cam_info["mask"])
             source_image =  apply_mask(source_cam_info["rgb_img"], source_cam_info["mask"])
 
             # plot_image_and_mask(source_cam_info["rgb_img"], source_image, save_name = f"source_cam_{cam_id}")
             # plot_image_and_mask(target_cam_info["rgb_img"], target_image, save_name = f"target_cam_{cam_id}")
-
-            K_target  = target_cam_info["intrinsics"]
-            K_source = source_cam_info["intrinsics"]
-            R, t = compute_camera_pose(source_image, target_image, K_source, K_target)
+            R, t = compute_camera_pose(source_image, target_image, source_cam_info, target_cam_info)
             H_mat  = transformation_matrix(R, t)
 
             # stich_ouput = stitch_images(source_image, target_image, K_source, K_target, H_mat)
