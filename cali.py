@@ -9,9 +9,8 @@ import torch
 from scipy.spatial import KDTree
 import copy
 
-
 from read_depth_and_build_pcd import read_depth_image, read_color_image, build_point_cloud_from_depth
-from cam_settings import cam_series
+from cam_settings import cam_series, keyframe_list, camera_set
 
 def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask_path = None, near_clip=0.5, far_clip=3.0):
     meta_path = os.path.join(root_path, 'meta_data', f'{cam_series_id}-MODEL.json')
@@ -32,7 +31,7 @@ def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask_path =
     
     distortion_coeffs = [color_intrinsics['k1'],color_intrinsics['k2'],color_intrinsics['p1'],color_intrinsics['p2'],color_intrinsics['k3']]
     distortion_coeffs = np.array(distortion_coeffs)
-    
+    verbose = False
     rgb_img = read_color_image(color_path, width=color_width, height=color_height, verbose=verbose)
     
     depth_to_color_warped_pixels = None
@@ -235,7 +234,80 @@ def camera_calibration(root_path, source_cam, target_cam, frame_id, k=4):
         trans_mat = source_mat
     )
     return trans_dict
+
+def find_kp_in_cam_space(corners, depth_warp_pixels, warp_xyz, k=4, cb_size=(7,4)):
+    print(depth_warp_pixels.shape, warp_xyz.shape)
+    tree = KDTree(depth_warp_pixels)
+    obj_points = []
+    for new_point in corners:
+        distances, indices = tree.query(new_point, k=k)
+        coor_3d = warp_xyz[indices]
+        obj_points.append(weighted_sum(distances, coor_3d))
+    obj_points = np.array(obj_points)
+    return obj_points
+
+def camera_calibration_kp_icp(root_path, source_cam, target_cam, frame_id, k=4):
+    frame_id = str(frame_id).zfill(7)
+    target_info = read_data(root_path, target_cam, frame_id)
     
+    # find chessboard corners in target image
+    cb_size = (7,4)
+    gray_target_img = cv2.cvtColor(target_info['rgb_img'], cv2.COLOR_BGR2GRAY)
+    ret, corners = cv2.findChessboardCorners(gray_target_img, cb_size, None)
+    if not ret:
+        print(f'Error! No chessboard detected in target {target_cam} on frame {frame_id}. Quit.')
+        return
+    corners = corners.squeeze()
+    
+    # calculate obj points in target space
+    target_tree = KDTree(target_info['depth_warp_pixels'])
+    target_points = []
+    for new_point in corners:
+        distances, indices = target_tree.query(new_point, k=4)
+        coor_3d = target_info['depth_warp_xyz'][indices]
+        target_points.append(weighted_sum(distances, coor_3d))
+    target_points = np.array(target_points)
+    
+    source_mat = {}
+    for s_cam in source_cam:
+        # find chessboard corners in source image
+        source_info = read_data(root_path, s_cam, frame_id, False)
+        gray_source_img = cv2.cvtColor(source_info['rgb_img'], cv2.COLOR_BGR2GRAY)
+        ret, source_corners = cv2.findChessboardCorners(gray_source_img, cb_size, None)
+        if not ret:
+            print(f'Camera {s_cam} detect chessboard in frame {frame_id} fail! Continue.')
+            continue
+        
+        source_tree = KDTree(source_info['depth_warp_pixels'])
+        source_points = []
+        for new_point in corners:
+            distances, indices = source_tree.query(new_point, k=4)
+            coor_3d = source_info['depth_warp_xyz'][indices]
+            source_points.append(weighted_sum(distances, coor_3d))
+        source_points = np.array(source_points)
+        
+        source_cloud = o3d.geometry.PointCloud()
+        source_cloud.points = o3d.utility.Vector3dVector(source_points)
+
+        target_cloud = o3d.geometry.PointCloud()
+        target_cloud.points = o3d.utility.Vector3dVector(target_points)
+        trans_path = f'data/cali_data/trans_data/{s_cam[-4:]}_to_{target_cam[-4:]}_H_fine.txt'
+        trans_mat = np.loadtxt(trans_path)
+        
+        reg_p2p = o3d.pipelines.registration.registration_icp(
+            source_cloud, target_cloud, 0.05, trans_mat,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint()
+        )
+        
+        homo_mat = reg_p2p.transformation
+        source_mat.append(homo_mat)
+    trans_dict = dict(
+        target = target_cam[-4:],
+        trans_mat = source_mat
+    )
+    return trans_dict
+
+ 
 def save_trans_dict(td, wb_path):
     if not os.path.exists(wb_path):
         os.mkdir(wb_path)
@@ -296,8 +368,16 @@ def save_registration_result_color_multi(sources, target, transformations, outpu
 
     o3d.io.write_point_cloud(output_path, combined_point_cloud)
 
+def arg_parse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--root_path', type=str, default='data/cali_data')
+    parser.add_argument('--task', type=str, default='cali')
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    root_path = 'data/cali_data'
+    args = arg_parse()
+    root_path = args.root_path
+    task = args.task
     pcd_output_path = os.path.join(root_path, 'pcd_output')
     downsample_step = 4
     if not os.path.exists(pcd_output_path):
@@ -308,6 +388,7 @@ if __name__ == '__main__':
             test_serie = cam_series[cam]
             info = read_data(root_path, test_serie, frame_id)
             output_fn = os.path.join(pcd_output_path, frame_id)
+            
             build_point_cloud_from_depth_downsampled(info, far_clip=2, output_path=output_fn, downsample_step=downsample_step)
 
     cali_sequence = []
@@ -320,13 +401,16 @@ if __name__ == '__main__':
             )
         )
         
-    trans_path = os.path.join(root_path, 'output_data')
+    trans_path = os.path.join(root_path, 'trans_icp_data')
     if not os.path.exists(trans_path):
         os.mkdir(trans_path)
     for cali_set in cali_sequence:
         source_series = [cam_series[i] for i in cali_set['source']]
         target_serie = cam_series[cali_set['target']]
-        trans_dict = camera_calibration(root_path, source_series, target_serie, frame_id=cali_set['frame'], k=4)
+        if task == 'refine':
+            trans_dict = camera_calibration_kp_icp(root_path, source_series, target_serie, frame_id=cali_set['frame'], k=4)
+        else:
+            trans_dict = camera_calibration(root_path, source_series, target_serie, frame_id=cali_set['frame'], k=4)
         save_trans_dict(trans_dict, trans_path)
     target_id = '1246'
     raw_cam_list = list(cam_series.keys())
@@ -357,4 +441,5 @@ if __name__ == '__main__':
     source_input = [read_pcd_and_trans(sid, pcd_path, trans_path, target_id) for sid in source_id]
     source_pcd = [sinfo['pcd'] for sinfo in source_input]
     source_trans = [sinfo['trans'] for sinfo in source_input]
-    save_registration_result_color_multi(source_pcd, target_input['pcd'],source_trans, f'data/combined_pcd_{target_id}.ply')
+    save_registration_result_color_multi(source_pcd, target_input['pcd'],source_trans, f'data/combined_icp_pcd_{target_id}.ply')
+
