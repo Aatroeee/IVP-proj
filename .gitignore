@@ -1,4 +1,5 @@
 # ignore all files in data
+__MACOSX/
 __pycache__/
 data/
 tmp_dense/
@@ -9,3 +10,8 @@ tmp_dense_shift/
 masked_pcs/
 camera_poses/
 point_clouds/
+res/
+tmp_dense/
+
+# ignore all submodule
+mast3r/
