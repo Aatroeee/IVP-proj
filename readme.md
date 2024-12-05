@@ -28,7 +28,12 @@ Run the `generate_camera_json.py` script
    ```
 
 ## 3. Other Tools
-- `utils/colmap_ds.py`: modify COLMAP database to insert camera poses
-- `utils/mask_generator.ipynb`: generate mask for human figure using segment anything model
+- `others/colmap_ds.py`: modify COLMAP database to insert camera poses
+- `others/mask_generator.ipynb`: generate mask for human figure using segment anything model
 - `registration_icp.py`: register point cloud using ICP algorithm
 - `sort_json.ipynb`: sort camera from distance when saving json
+
+## Update
+- 2024/12/05: 
+    - rewrite calibration pipeline to `utils.py` camera pose estimation and point cloud registration
+    - add `scene.py` for generating data structure for 3DGS training

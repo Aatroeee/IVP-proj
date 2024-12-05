@@ -5,10 +5,11 @@ import os
 import sys
 import json
 import argparse
-import torch
 from scipy.spatial import KDTree
 import copy
 from tqdm import tqdm
+from typing import List
+from einops import rearrange
 
 cam_series = {
     "1362": "049122251362",
@@ -158,11 +159,17 @@ class CameraInfo:
     '''
     def __init__(self, meta_path):
         meta_info = read_meta_data(meta_path)
+        self.extrinsics = None
         for key, value in meta_info.items():
             setattr(self, key, value)
     
     def get_cam_id(self):
         return self.cam_series[-4:]
+    def get_distortion(self):
+        return self.color_distortion
+    def get_intrinsics(self):
+        return self.color_intrinsics
+    
 
 def weighted_sum(distances, coor_3d):
     num = distances.shape[0]
@@ -233,8 +240,6 @@ class FrameInfo:
         y_coords = warped_pixels_int[:, 1]
         warped_mask = (x_coords >= 0) & (x_coords < self.cam_info.color_width) & \
                       (y_coords >= 0) & (y_coords < self.cam_info.color_height)
-        if self.mask is not None:
-            warped_mask = warped_mask & self.mask[y_coords, x_coords]
         return warped_mask, x_coords, y_coords
     
     def get_pcd(self, cfg):
@@ -291,8 +296,15 @@ class FrameInfo:
         ret, corners = cv2.findChessboardCorners(gray_img, board_size, None)
         if not ret:
             return None
-        
         return corners
+    
+    @staticmethod
+    def get_view_infos(root_path, frame_id, cam_list):
+        view_infos = []
+        for cam_id in cam_list:
+            cam_info = CameraInfo(get_meta_path(root_path, cam_series[cam_id]))
+            view_infos.append(FrameInfo(get_color_raw_path(root_path, frame_id, cam_series[cam_id]), cam_info))
+        return view_infos
 
 class TransformCollection:
     def __init__(self):
@@ -310,6 +322,11 @@ class TransformCollection:
             return self.transform_data[(s_id, t_id)]
         else:
             return None
+    
+    def get_transform_to_target(self, t_id):
+        trans_keys = [key for key in self.transform_data.keys() if key[1] == t_id]
+        target_trans_dict = {key[0]: self.transform_data[key] for key in trans_keys}
+        return target_trans_dict
     
     def mat_mul(self, a_id, b_id, c_id):
         a2b_mat = self.get_transform(a_id, b_id)
@@ -358,40 +375,24 @@ class TransformCollection:
         source_list = [cam_id for cam_id in cam_id_list if cam_id != target_cam_id]
         combined_pcd = copy.deepcopy(cam_dict[target_cam_id])
         for source_cam_id in source_list:
+            trans_mat = self.get_transform(source_cam_id, target_cam_id)
+            if trans_mat is None:
+                print(f'Warning! No transform found between {source_cam_id} and {target_cam_id}. Skip.')
+                continue
             source_temp = copy.deepcopy(cam_dict[source_cam_id])
-            source_temp.transform(self.get_transform(source_cam_id, target_cam_id))
+            source_temp.transform(trans_mat)
             combined_pcd += source_temp
         return combined_pcd
     
 
-def camera_calibration_pnp_v2(source_infos: list[FrameInfo], target_info: FrameInfo, k=4, board_size=(7,4)):
-    # find chessboard corners in target image
-    corners = target_info.get_chessboard_corners_3d(board_size)
-    if corners is None:
-        print(f'Error! No chessboard detected in target {target_info.get_cam_id()} on frame {target_info.frame_id}. Quit.')
-        return
-    
-    trans_dict = {}
-    for source_info in source_infos:
-        # find 3d keypoints in source space
-        corners_2d = source_info.detect_chessboard_corners_2d(board_size)
-        if corners_2d is None:
-            print(f'No chessboard detected in source {source_info.get_cam_id()} on frame {source_info.frame_id}. Continue.')
-            continue
-        success, rvec, tvec = cv2.solvePnP(corners, corners_2d, source_info.cam_info.depth_intrinsics, source_info.cam_info.color_distortion)
-        if success:
-            homo_mat = np.eye(4)
-            R, _ = cv2.Rodrigues(rvec)
-            # note: camera to world(1246)
-            homo_mat[:3, :] = np.hstack((R, tvec))
-            trans_dict[(source_info.get_cam_id(), target_info.get_cam_id())] = np.linalg.inv(homo_mat)
-    
-    return trans_dict
-
-def camera_calibration_pnp(source_frame_info:utils.FrameInfo, target_frame_info:utils.FrameInfo, k=4):
+def camera_calibration_pnp(source_frame_info:FrameInfo, target_frame_info:FrameInfo, k=4):
     obj_points = target_frame_info.get_chessboard_corners_3d()
     source_corners = source_frame_info.detect_chessboard_corners_2d()
+    if source_corners is None:
+        print(f'Warning! No chessboard detected in source {source_frame_info.get_cam_id()} on frame {source_frame_info.frame_id}. Quit.')
+        return None
     success, rvec, tvec = cv2.solvePnP(obj_points, source_corners, source_frame_info.cam_info.color_intrinsics, source_frame_info.cam_info.color_distortion)
+    # success, rvec, tvec, _ = cv2.solvePnPRansac(obj_points, source_corners, source_frame_info.cam_info.color_intrinsics, source_frame_info.cam_info.color_distortion, flags=cv2.SOLVEPNP_ITERATIVE)
     if success:
         homo_mat = np.eye(4)
         R, _ = cv2.Rodrigues(rvec)
@@ -427,25 +428,27 @@ def arg_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root_path', type=str, default='data/cali_data')
     parser.add_argument('--task', type=str, default='cali')
-    parser.add_argument('--trans_path', type=str, default='trans_icp_data')
-    parser.add_argument('--pcd_path', type=str, default='pcd_output')
+    parser.add_argument('--trans_path', type=str, default='data/cali_data/trans_icp_data4')
+    parser.add_argument('--pcd_path', type=str, default='billy.ply')
+    parser.add_argument('--mask_path', type=str, default='billy_data/masks_data/0000001/masks')
     parser.add_argument('--frame_id', type=str, default='50')
     parser.add_argument('--near_clip', type=float, default=0.1)
-    parser.add_argument('--far_clip', type=float, default=3)
-    parser.add_argument('--downsample_step', type=int, default=4)
+    parser.add_argument('--far_clip', type=float, default=2.2)
+    parser.add_argument('--downsample_step', type=int, default=2)
+    parser.add_argument('--refine', action='store_true')
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = arg_parse()
     root_path = args.root_path
     task = args.task
-    trans_path = os.path.join(root_path, args.trans_path)
+    trans_path = args.trans_path
     pcd_path = os.path.join(root_path, args.pcd_path)
     cam_id_list = [cam_id for cam_id in list(cam_series.keys()) if cam_id not in camera_set[8]]
     cam_series_list = [cam_series[cam_id] for cam_id in cam_id_list]
     cam_info_dict = {cam_id: CameraInfo(get_meta_path(root_path, cam_series[cam_id])) for cam_id in cam_id_list}
     
-    target_cam_id = '1246'
+    target_id = '1246'
     
     if task == 'cali':
         frame_info_dict = {} # (cam_id, frame_id) -> FrameInfo
@@ -468,48 +471,39 @@ if __name__ == '__main__':
         trans_collection = TransformCollection()
         for cali_set in tqdm(cali_sequence):
             current_frame = str(cali_set['frame']).zfill(7)
-            source_infos = [frame_info_dict[(i, current_frame)] for i in cali_set['source']]
-            target_info = frame_info_dict[(cali_set["target"], current_frame)]
-            target_cam_id = target_info.get_cam_id()
-            source_cam_ids = [s_cam_id for s_cam_id in cali_set['source']]
-            
-            trans_dict = camera_calibration_pnp(source_infos, target_info, k=4)
-            trans_collection.add_transform_dict(trans_dict)
-            
-            # valid_source_cam_ids = [s_cam_id for s_cam_id in source_cam_ids if (s_cam_id, target_cam_id) in trans_dict.keys()]
-            # for s_cam_id in valid_source_cam_ids:
-            #     s_cam_info = frame_info_dict[(s_cam_id, current_frame)]
-            #     trans_mat = calibration_icp_adjust(s_cam_info, target_info, trans_dict[(s_cam_id, target_cam_id)])
-            #     trans_collection.add_transform(s_cam_id, target_cam_id, trans_mat)
-            #     refine_diff.append(np.linalg.norm(trans_mat - trans_dict[(s_cam_id, target_cam_id)]))
+            set_target_cam_id = cali_set['target']
+            target_info = frame_info_dict[(set_target_cam_id, current_frame)]
+            for s_cam_id in cali_set['source']:
+                source_info = frame_info_dict[(s_cam_id, current_frame)]
+                trans_mat = camera_calibration_pnp(source_info, target_info, k=4)
+                if trans_mat is not None:
+                    if args.refine: 
+                        trans_mat_adjust = calibration_icp_adjust(source_info, target_info, trans_mat)
+                        refine_diff.append(np.linalg.norm(trans_mat - trans_mat_adjust))
+                        trans_mat = trans_mat_adjust
+                    trans_collection.add_transform(s_cam_id, set_target_cam_id, trans_mat)
+                
+        if len(refine_diff) > 0:
+            print(f'Refine diff: {np.max(refine_diff)}')
         
         if not os.path.exists(trans_path):
             os.mkdir(trans_path)
         
-        cali_set = trans_collection.merge_to_target(target_cam_id)
+        trans_collection.merge_to_target(target_id)
         trans_collection.save_collection(trans_path)
         
-        # print(f'Refine diff: {np.mean(refine_diff)}')
     elif task == 'merge':
         trans_collection = TransformCollection()
         trans_collection.load_collection(trans_path)
-        # cali_set = trans_collection.merge_to_target(target_cam_id)
-        cali_set = ['1246', '0879']
+        cali_set = trans_collection.merge_to_target(target_id)
         frame_id = args.frame_id
-        save_path = os.path.join(root_path, 'pcd_output', f'{frame_id}')
-        if not os.path.exists(save_path):
-            os.mkdir(save_path)
             
         frame_info_dict = {}
         pcd_list = []
         for cam_id in cali_set:
+            cam_series_id = cam_series[cam_id]
             frame_info_dict[cam_id] = FrameInfo(get_color_raw_path(root_path, frame_id, cam_series[cam_id]), cam_info_dict[cam_id])
             pcd_list.append(frame_info_dict[cam_id].get_pcd(args))
-        combined_pcd = trans_collection.merge_pcd(pcd_list, cali_set, target_cam_id)
-        if not os.path.exists(pcd_path):
-            os.mkdir(pcd_path)
-        save_fn = os.path.join(pcd_path, f'combined_0879.ply')
-        o3d.io.write_point_cloud(save_fn, combined_pcd)
-        
-        
+        combined_pcd = trans_collection.merge_pcd(pcd_list, cali_set, target_id)
+        o3d.io.write_point_cloud(pcd_path, combined_pcd)
         
