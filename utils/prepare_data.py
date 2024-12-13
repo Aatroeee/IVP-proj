@@ -73,3 +73,45 @@ def read_mask_image(mask_path):
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
     mask = mask > 128
     return mask
+
+def get_meta_path(root_path, cam_id):
+    cam_series_id = cam_series[cam_id]
+    return os.path.join(root_path, 'meta_data', f'{cam_series_id}-MODEL.json')
+
+def get_color_raw_path(root_path, frame_id, cam_id):
+    frame_str = str(frame_id).zfill(7)
+    cam_series_id = cam_series[cam_id]
+    return os.path.join(root_path, 'raw_data', f'{frame_str}', f'{cam_series_id}-COLOR.{frame_str}.raw')
+# billy_data/masks_data/0000001/masks
+def get_mask_path(mask_root, frame_id, cam_id):
+    frame_str = str(frame_id).zfill(7)
+    cam_series_id = cam_series[cam_id]
+    cam_mask_path = os.path.join(mask_root, f'{cam_series_id}.png')
+    return cam_mask_path
+
+def build_point_cloud_from_depth(depth_img: np.ndarray,
+                                 depth_intrinsics_matrix: np.ndarray):
+    '''Build point cloud from depth image.
+    Args:
+        depth_img: np.ndarray, depth image.
+        depth_intrinsics_matrix: np.ndarray, 3x3 matrix of depth intrinsics, as specified in the meta data.
+
+    Returns:
+        xyz: np.ndarray, point cloud coordinates in the camera space.
+    '''
+    depth = depth_img.astype(np.float32)
+    # build point cloud
+    HEIGHT, WIDTH = depth_img.shape[:2]
+    x = np.arange(0, WIDTH)
+    y = np.arange(0, HEIGHT)
+    x, y = np.meshgrid(x, y)
+    # apply intrinsic matrix to get camera space coordinates
+    x = (x - depth_intrinsics_matrix[0, 2]) * depth / depth_intrinsics_matrix[0, 0]
+    y = (y - depth_intrinsics_matrix[1, 2]) * depth / depth_intrinsics_matrix[1, 1]
+
+    x = x.flatten()
+    y = y.flatten()
+    z = depth.flatten()
+    xyz = np.vstack((x, y, z)).T
+    xyz = xyz.astype(np.float32)
+    return xyz

@@ -1,3 +1,0 @@
-python registration_icp.py --source tmp/pcd-046122250879.ply --target tmp/pcd-043422251246.ply  --load_H  cali1/output_data/0879_to_1246_H_fine.txt
-
-current_transformation = [np.loadtxt(file) for file in args.load_H]
