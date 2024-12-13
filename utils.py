@@ -151,7 +151,15 @@ def get_meta_path(root_path, cam_id):
 
 def get_color_raw_path(root_path, frame_id, cam_id):
     frame_str = str(frame_id).zfill(7)
-    return os.path.join(root_path, 'raw_data', f'{frame_str}', f'{cam_id}-COLOR.{frame_str}.raw')
+    cam_series_id = cam_series[cam_id]
+    return os.path.join(root_path, 'raw_data', f'{frame_str}', f'{cam_series_id}-COLOR.{frame_str}.raw')
+# billy_data/masks_data/0000001/masks
+def get_mask_path(root_path, frame_id, cam_id):
+    frame_str = str(frame_id).zfill(7)
+    cam_series_id = cam_series[cam_id]
+    mask_root = os.path.join(root_path, 'masks_data', f'{frame_str}', f'masks')
+    cam_mask_path = os.path.join(mask_root, f'{cam_series_id}.png')
+    return cam_mask_path
 
 class CameraInfo:
     '''
@@ -221,38 +229,29 @@ class FrameInfo:
             self.color_xyz = depth_to_color_cam_xyz
         return self.color_xyz
     
-    
-    def get_downsample_mask(self, downsample_step=2):
-        depth_img = self.depth_img
-        downsample_mask = np.zeros_like(depth_img, dtype=bool)
-        downsample_mask[::downsample_step, ::downsample_step] = True
-        return downsample_mask
-    
-    def get_clip_mask(self, near_clip=0.1, far_clip=3):
+    def get_pcd(self, near_clip=None, far_clip=None, downsample_step=None):
         depth_mask = np.ones_like(self.depth_img, dtype=bool)
-        depth_mask = depth_mask & (self.depth_img >= near_clip) & (self.depth_img <= far_clip)
-        return depth_mask
-    
-    def get_warped_mask(self):
+        
+        if near_clip is not None and far_clip is not None:
+            depth_mask = depth_mask & (self.depth_img >= near_clip) & (self.depth_img <= far_clip)
+        if downsample_step is not None:
+            downsample_mask = np.zeros_like(self.depth_img, dtype=bool)
+            downsample_mask[::downsample_step, ::downsample_step] = True
+            depth_mask = depth_mask & downsample_mask
+            
+        depth_mask = depth_mask.flatten()
         warped_pixels = self.get_warped_pixels()
         warped_pixels_int = warped_pixels.astype(int)
         x_coords = warped_pixels_int[:, 0]
         y_coords = warped_pixels_int[:, 1]
         warped_mask = (x_coords >= 0) & (x_coords < self.cam_info.color_width) & \
                       (y_coords >= 0) & (y_coords < self.cam_info.color_height)
-        return warped_mask, x_coords, y_coords
-    
-    def get_pcd(self, near_clip=None, far_clip=None, downsample_step=None):
-        if near_clip is not None and far_clip is not None:
-            depth_mask = self.get_clip_mask(near_clip, far_clip)
-        else:
-            depth_mask = np.ones_like(self.depth_img, dtype=bool)
-        if downsample_step is not None:
-            downsample_mask = self.get_downsample_mask(downsample_step)
-            depth_mask = depth_mask & downsample_mask
-        depth_mask = depth_mask.flatten()
-        warped_mask, x_coords, y_coords = self.get_warped_mask()
         valid_mask = warped_mask & depth_mask
+        
+        if self.mask is not None:
+            y_coords_clip = np.clip(y_coords, 0, self.cam_info.color_height - 1)
+            x_coords_clip = np.clip(x_coords, 0, self.cam_info.color_width - 1)
+            valid_mask = valid_mask & self.mask[y_coords_clip, x_coords_clip]
         
         colors = self.color_img[y_coords[valid_mask], x_coords[valid_mask]]
         depth_to_color_cam_xyz = self.get_color_xyz()
@@ -431,8 +430,8 @@ def arg_parse():
     parser.add_argument('--pcd_path', type=str, default='billy.ply')
     parser.add_argument('--mask_path', type=str, default='billy_data/masks_data/0000001/masks')
     parser.add_argument('--frame_id', type=str, default='50')
-    parser.add_argument('--near_clip', type=float, default=None)
-    parser.add_argument('--far_clip', type=float, default=None)
+    parser.add_argument('--near_clip', type=float, default=0.1)
+    parser.add_argument('--far_clip', type=float, default=2.0)
     parser.add_argument('--downsample_step', type=int, default=None)
     parser.add_argument('--refine', action='store_true')
     return parser.parse_args()
@@ -505,4 +504,11 @@ if __name__ == '__main__':
             pcd_list.append(frame_info_dict[cam_id].get_pcd(args.near_clip, args.far_clip, args.downsample_step))
         combined_pcd = merge_pcd(trans_collection, pcd_list, cali_set, target_id)
         o3d.io.write_point_cloud(pcd_path, combined_pcd)    
-        
+    
+    elif task == 'test':
+        frame_id = 1
+        cam_id = '1246'
+        mask_patzh = get_mask_path(root_path, frame_id, cam_id)
+        frame_info = FrameInfo(get_color_raw_path(root_path, frame_id, cam_id), cam_info_dict[cam_id], mask_path)
+        pcd = frame_info.get_pcd(args.near_clip, args.far_clip, args.downsample_step)
+        o3d.io.write_point_cloud(pcd_path, pcd)
