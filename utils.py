@@ -182,7 +182,7 @@ def weighted_sum(distances, coor_3d):
 
 class FrameInfo:
     '''
-    One frame of images, including depth, color, mask, and corresponding camera info.
+    One frame of image, including depth, color, mask, and corresponding camera info.
     '''
     def __init__(self, color_raw_path, cam_info: CameraInfo, mask_path=None):
         depth_path = color_raw_path.replace('COLOR', 'DEPTH')
@@ -242,13 +242,13 @@ class FrameInfo:
                       (y_coords >= 0) & (y_coords < self.cam_info.color_height)
         return warped_mask, x_coords, y_coords
     
-    def get_pcd(self, cfg):
-        if cfg.near_clip is not None and cfg.far_clip is not None:
-            depth_mask = self.get_clip_mask(cfg.near_clip, cfg.far_clip)
+    def get_pcd(self, near_clip=None, far_clip=None, downsample_step=None):
+        if near_clip is not None and far_clip is not None:
+            depth_mask = self.get_clip_mask(near_clip, far_clip)
         else:
             depth_mask = np.ones_like(self.depth_img, dtype=bool)
-        if cfg.downsample_step is not None:
-            downsample_mask = self.get_downsample_mask(cfg.downsample_step)
+        if downsample_step is not None:
+            downsample_mask = self.get_downsample_mask(downsample_step)
             depth_mask = depth_mask & downsample_mask
         depth_mask = depth_mask.flatten()
         warped_mask, x_coords, y_coords = self.get_warped_mask()
@@ -367,22 +367,21 @@ class TransformCollection:
             trans_fn = os.path.join(root_path, f'{s_id}_to_{t_id}.txt')
             np.savetxt(trans_fn, trans_mat)
     
-    def merge_pcd(self, pcd_list, cam_id_list, target_cam_id):
-        if target_cam_id not in cam_id_list:
-            print(f'Error! Target camera {target_cam_id} not in the camera list. Quit.')
-            return
-        cam_dict = {cam_id: pcd for cam_id, pcd in zip(cam_id_list, pcd_list)}
-        source_list = [cam_id for cam_id in cam_id_list if cam_id != target_cam_id]
-        combined_pcd = copy.deepcopy(cam_dict[target_cam_id])
-        for source_cam_id in source_list:
-            trans_mat = self.get_transform(source_cam_id, target_cam_id)
-            if trans_mat is None:
-                print(f'Warning! No transform found between {source_cam_id} and {target_cam_id}. Skip.')
-                continue
-            source_temp = copy.deepcopy(cam_dict[source_cam_id])
-            source_temp.transform(trans_mat)
-            combined_pcd += source_temp
-        return combined_pcd
+def merge_pcd(trans_collection, pcd_list, cam_id_list, target_cam_id):
+    if target_cam_id not in cam_id_list:
+        print(f'Error! Target camera {target_cam_id} not in the camera list. Quit.')
+        return
+    cam_dict = {cam_id: pcd for cam_id, pcd in zip(cam_id_list, pcd_list)}
+    combined_pcd = o3d.geometry.PointCloud()
+    for source_cam_id in cam_id_list:
+        trans_mat = trans_collection.get_transform(source_cam_id, target_cam_id)
+        if trans_mat is None:
+            print(f'Warning! No transform found between {source_cam_id} and {target_cam_id}. Skip.')
+            continue
+        source_temp = copy.deepcopy(cam_dict[source_cam_id])
+        source_temp.transform(trans_mat)
+        combined_pcd += source_temp
+    return combined_pcd
     
 
 def camera_calibration_pnp(source_frame_info:FrameInfo, target_frame_info:FrameInfo, k=4):
@@ -432,9 +431,9 @@ def arg_parse():
     parser.add_argument('--pcd_path', type=str, default='billy.ply')
     parser.add_argument('--mask_path', type=str, default='billy_data/masks_data/0000001/masks')
     parser.add_argument('--frame_id', type=str, default='50')
-    parser.add_argument('--near_clip', type=float, default=0.1)
-    parser.add_argument('--far_clip', type=float, default=2.2)
-    parser.add_argument('--downsample_step', type=int, default=2)
+    parser.add_argument('--near_clip', type=float, default=None)
+    parser.add_argument('--far_clip', type=float, default=None)
+    parser.add_argument('--downsample_step', type=int, default=None)
     parser.add_argument('--refine', action='store_true')
     return parser.parse_args()
 
@@ -503,7 +502,7 @@ if __name__ == '__main__':
         for cam_id in cali_set:
             cam_series_id = cam_series[cam_id]
             frame_info_dict[cam_id] = FrameInfo(get_color_raw_path(root_path, frame_id, cam_series[cam_id]), cam_info_dict[cam_id])
-            pcd_list.append(frame_info_dict[cam_id].get_pcd(args))
-        combined_pcd = trans_collection.merge_pcd(pcd_list, cali_set, target_id)
-        o3d.io.write_point_cloud(pcd_path, combined_pcd)
+            pcd_list.append(frame_info_dict[cam_id].get_pcd(args.near_clip, args.far_clip, args.downsample_step))
+        combined_pcd = merge_pcd(trans_collection, pcd_list, cali_set, target_id)
+        o3d.io.write_point_cloud(pcd_path, combined_pcd)    
         

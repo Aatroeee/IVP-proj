@@ -37,3 +37,13 @@ Run the `generate_camera_json.py` script
 - 2024/12/05: 
     - rewrite calibration pipeline to `utils.py` camera pose estimation and point cloud registration
     - add `scene.py` for generating data structure for 3DGS training
+
+
+example data path:
+- `raw_data/`
+    - `0000000/`
+        - `035322250028-COLOR.0000001.raw`
+    - ...
+- `meta_data/`
+    - `035322250028-MODEL.json`
+    - ...
