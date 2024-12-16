@@ -18,7 +18,6 @@ from r2d2.nets.patchnet import *
 from r2d2.extract import NonMaxSuppression,extract_multiscale
 from segment_anything import sam_model_registry, SamPredictor
 from skimage.metrics import structural_similarity as ssim
-import re
 
 # from mast3r.mast3r.model import AsymmetricMASt3R
 # from mast3r.mast3r.fast_nn import fast_reciprocal_NNs
@@ -172,11 +171,6 @@ class calibrator():
         """Warp img1 to align with img2 using homography H."""
         # Get the dimensions of img2
         height, width = img2.shape[:2]
-        plt.imshow(img1)
-        plt.savefig("image1.png")
-        plt.imshow(img2)
-        plt.savefig("image2.png")
-
         
         # Warp img1 to img2's perspective
         warped_image = cv2.warpPerspective(img1, H, (width, height))
@@ -268,31 +262,6 @@ class calibrator():
         rgb_image[~mask] = 0 
         return rgb_image
 
-
-
-    def apply_mask(self, image, mask):
-        """
-        Apply a binary mask to an image, keeping only the foreground.
-
-        Args:
-            image (np.ndarray): The input image (H, W, C).
-            mask (np.ndarray): A binary mask (H, W) where the foreground is 1 and the background is 0.
-
-        Returns:
-            np.ndarray: The image with the background masked out, keeping only the foreground.
-        """
-        if image.shape[:2] != mask.shape:
-            raise ValueError("The image and mask must have the same dimensions.")
-
-        # Ensure the mask is binary (0 or 1)
-        mask = (mask > 0).astype(np.uint8)
-
-        # Apply the mask to the image (keeping the foreground)
-        masked_image = cv2.bitwise_and(image, image, mask=mask)
-
-        return masked_image
-
-
     def detect_features(self,image):
         keypoints, descriptors = self.feature_detector.detectAndCompute(image, None)
         return  keypoints, descriptors
@@ -368,16 +337,13 @@ class calibrator():
         self.root_path = root_path 
         self.frame_id = str(frame_id).zfill(7)
         self.target_cam = target_cam
-        self.target_info = read_data(self.root_path, self.target_cam, self.frame_id, True, mask=True)
+        self.target_info = read_data(self.root_path, self.target_cam, self.frame_id)
         self.target_image  = self.target_info["rgb_img"]
         self.source_cams = source_cams
         self.vis_flag = args.vis_flag
         self.args = args
 
-        # print(f"compute extriniscs for frame index ::{self.frame_id}") 
-
-        image_foreground = self.apply_mask(target_image, self.target_info["mask"])
-        breakpoint()
+        print(f"compute extriniscs for frame index ::{self.frame_id}") 
         if self.feature_extractor == "orb" or self.feature_extractor ==  "sift":
             target_img = cv2.cvtColor(self.target_image, cv2.COLOR_BGR2GRAY)
             keypoints_target, descriptors_target = self.feature_detector.detectAndCompute(target_img, None)
@@ -386,7 +352,7 @@ class calibrator():
      
         for s_cam in self.source_cams:
             # Load image
-            source_info = read_data(self.root_path, s_cam, self.frame_id, True, mask = True)
+            source_info = read_data(self.root_path, s_cam, self.frame_id, False)
             # Detect keypoints and descriptors in the source image
             if self.feature_extractor == "orb" or self.feature_extractor == "sift":
                 source_img = cv2.cvtColor(source_info['rgb_img'], cv2.COLOR_BGR2GRAY)
@@ -401,9 +367,9 @@ class calibrator():
             # Sort matches by distance (best matches first)
             matches = sorted(matches, key=lambda x: x.distance)
 
-            # numGoodMatches = int(len(matches) * 0.70)
+            numGoodMatches = int(len(matches) * 0.75)
             
-            # matches = matches[:numGoodMatches]
+            matches = matches[:numGoodMatches]
         
 
             # Extract the matched points in both images
@@ -432,15 +398,11 @@ class calibrator():
 
             H_matrix , _ = cv2.findHomography(pts_source, pts_target, cv2.RANSAC)
             warped_image  = self.warp_image(source_info["rgb_img"],H_matrix, self.target_info["rgb_img"])
-        
-
-
             mse, ssim = self.compute_metrics(self.target_image, warped_image)
             if self.vis_flag:
                 print(f"MSE and SSIM scores are {mse:.3f} and {ssim:.3f}")
                 self.save_visualization(self.target_info["rgb_img"],warped_image, "warped_vis.png")
                 self.visualize_difference(self.target_info["rgb_img"], source_info["rgb_img"])
-                breakpoint()
 
  	        # Calculates an essential matrix from the corresponding points in two images from potentially two different cameras.
             # breakpoint()
@@ -455,58 +417,27 @@ class calibrator():
 
             else:
 
-                E, mask = cv2.findEssentialMat(pts_source, pts_target,  source_info['intrinsics'],source_info['distortion'],self.target_info['intrinsics'],self.target_info['distortion'])
+                E, mask = cv2.findEssentialMat(pts_source, pts_target,  source_info['intrinsics'],source_info['distortion'],self.target_info['intrinsics'],self.target_info['distortion'], method= cv2.RANSAC, prob = 0.99,threshold =0.10 )
 
                 # Recover the relative rotation (R) and translation (t)
-                _, R, t, mask = cv2.recoverPose(E, pts_source, pts_target,self.target_info['intrinsics'])
-            
+                _, R, t, mask = cv2.recoverPose(E, pts_source, pts_target, source_info['intrinsics'])
+
+                # After determining the best rotation matrix, save it as a .npy file
+             
+                
                 homo_mat = np.eye(4)
+                # note: camera to world(1246)
                 homo_mat[:3, :3] = R
                 homo_mat[:3,3] = t.flatten()
+                
                 self.source_mat[s_cam[-4:]] = np.linalg.inv(homo_mat)
 
+        
         trans_dict = dict(
                     target = self.target_cam[-4:],
                     trans_mat = self.source_mat
                 )
         return trans_dict
-
-def filter_camera_data(cam_series, camera_set, file_path):
-    """
-    Filters cam_series and camera_set based on numbers extracted from JSON file names in the given file path.
-
-    Args:
-        cam_series (dict): Dictionary of camera series data.
-        camera_set (dict): Dictionary of camera set data.
-        file_path (str): Path to the directory containing JSON files.
-
-    Returns:
-        tuple: Filtered cam_series and camera_set dictionaries.
-    """
-    # Step 1: Read file names using glob
-    file_paths = glob.glob(os.path.join(file_path, "*.json"))
-    filenames = [os.path.basename(path) for path in file_paths]
-
-    # Step 2: Extract numbers from file names
-    extracted_numbers = {re.search(r"\d+", filename).group() for filename in filenames}
-
-    breakpoint()
-
-    # Step 3: Filter cam_series based on extracted numbers
-    filtered_cam_series = {
-        key: value
-        for key, value in cam_series.items()
-        if value in extracted_numbers
-    }
-
-    # Step 4: Filter camera_set based on filtered_cam_series keys
-    filtered_camera_set = {
-        key: [item for item in value if item in filtered_cam_series]
-        for key, value in camera_set.items()
-        if any(item in filtered_cam_series for item in value)
-    }
-
-    return filtered_cam_series, filtered_camera_set
 
 
 if __name__ == "__main__":
@@ -521,13 +452,6 @@ if __name__ == "__main__":
 
     calibrate = calibrator(args = args)
 
-    root_path = '/scratch/projects/fouheylab/dma9300/recon3d/data_old/billy/'
-
-
-    cam_series, camera_set = filter_camera_data(cam_series, camera_set, "/scratch/projects/fouheylab/dma9300/recon3d/data_old/billy/meta_data/")
-
-    breakpoint()
-
     cali_sequence = []
     for i in range(8):
         cali_sequence.append(
@@ -537,13 +461,11 @@ if __name__ == "__main__":
                 source = camera_set[i] + camera_set[(i+1) % 8] + camera_set[(i-1) % 8]
             )
         )
-   
-    output_path = f'/scratch/projects/fouheylab/dma9300/recon3d/data_old/billy/output_data_mask{args.feature_extractor}'
-    
+    root_path = 'data'
+    output_path = f'/scratch/projects/fouheylab/dma9300/recon3d/data/output_data_calib_{args.feature_extractor}'
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for cali_set in cali_sequence:
-        breakpoint()
         source_series = [cam_series[i] for i in cali_set['source']]
         target_serie = cam_series[cali_set['target']]
         trans_dict =  calibrate.compute_camera_extrinisics(root_path, target_serie, source_series, frame_id=cali_set['frame'], args=args)
@@ -552,7 +474,6 @@ if __name__ == "__main__":
 
 
     
-
 
 
 

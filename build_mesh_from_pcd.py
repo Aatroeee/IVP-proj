@@ -1,8 +1,8 @@
 import open3d as o3d
 import numpy as np
 
-pcd_path = 'combined_pcd_dense_1246.ply'
-mesh_path = 'cali1/mesh_data/mesh_0.ply'
+pcd_path = '/scratch/projects/fouheylab/dma9300/recon3d/billy_pcs/point_cloud.ply'
+mesh_path = 'mesh_0.ply'
 # Load the point cloud
 pcd = o3d.io.read_point_cloud(pcd_path)
 
@@ -25,4 +25,4 @@ mesh.remove_vertices_by_mask(vertices_to_remove)
 o3d.io.write_triangle_mesh(mesh_path, mesh)
 
 # Visualize the mesh
-o3d.visualization.draw_geometries([mesh])
+# o3d.visualization.draw_geometries([mesh])

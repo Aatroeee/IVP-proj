@@ -91,12 +91,11 @@ if __name__ == "__main__":
                 source = camera_set[i] + camera_set[(i+1) % 8] + camera_set[(i-1) % 8]
             )
         )
-    root_path = 'data'
-    output_path = 'data/output_data_best'
+    root_path = '/scratch/projects/fouheylab/dma9300/recon3d/data'
+    output_path = '/scratch/projects/fouheylab/dma9300/recon3d/data/output_data'
     if not os.path.exists(output_path):
         os.mkdir(output_path)
     for cali_set in cali_sequence:
-        print("printing run")
         source_series = [cam_series[i] for i in cali_set['source']]
         target_serie = cam_series[cali_set['target']]
         trans_dict = camera_calibration(root_path, source_series, target_serie, frame_id=cali_set['frame'], k=4)

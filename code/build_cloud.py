@@ -93,8 +93,8 @@ def build_point_cloud_from_depth_downsampled(info,
 if __name__ == "__main__":
     # build pcd directly
 
-    root_path = 'data'
-    output_path = 'point_clouds'
+    root_path = '/scratch/projects/fouheylab/dma9300/recon3d/data'
+    output_path = '/scratch/projects/fouheylab/dma9300/recon3d/data/point_clouds'
     downsample_step = 4
     if not os.path.exists(output_path):
         os.mkdir(output_path)

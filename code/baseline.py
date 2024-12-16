@@ -70,8 +70,6 @@ def generate_image_mask(image_array, predictor):
     instances = outputs["instances"]
     human_indices = (instances.pred_classes == 0).nonzero(as_tuple=True)[0]
 
-    breakpoint()
-
     if len(human_indices) == 0:
         raise ValueError("No person detected in the image.")
 
@@ -81,7 +79,7 @@ def generate_image_mask(image_array, predictor):
     return mask
 
 # read data from raw and meta data
-def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask =True , near_clip=0.5, far_clip=3.0):
+def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask =False , near_clip=0.5, far_clip=3.0):
     meta_path = os.path.join(root_path, 'meta_data', f'{cam_series_id}-MODEL.json')
     frame_str = str(frame_id).zfill(7)
     depth_path = os.path.join(root_path, 'raw_data', frame_str, f'{cam_series_id}-DEPTH.{frame_str}.raw')
@@ -171,7 +169,7 @@ def read_data(root_path, cam_series_id, frame_id, need_depth = True, mask =True 
         depth_intrinsics = intrinsic_matrix,
         
         color_offset_extrinsics = extrinsics,
-        mask = image_mask
+        mask = None
     )
 
 

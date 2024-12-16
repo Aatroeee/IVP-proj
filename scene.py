@@ -168,7 +168,7 @@ def get_ds_sampler(all_cam_list, context_cam_list=['1246','0879','1040'], target
         
 if __name__ == '__main__':
     trans_collection = TransformCollection()
-    trans_collection.load_collection('data/cali_data/output_data')
+    trans_collection.load_collection('/scratch/projects/fouheylab/dma9300/recon3d/data/output_data')
     # frame_list = keyframe_list
     scene_cam_list = [cam for cam in cam_series.keys() if cam in camera_set[7] + camera_set[0] + camera_set[1]]
     # context_cam_list=['1246','0028','1318','1265']
@@ -176,8 +176,8 @@ if __name__ == '__main__':
     frame_list = [1]
     scene_list = []
     for frame in frame_list:
-        view_list = FrameInfo.get_view_infos('data/billy_data', frame, scene_cam_list)
+        view_list = FrameInfo.get_view_infos('/scratch/projects/fouheylab/dma9300/recon3d/data_old/billy', frame, scene_cam_list)
         scene = Scene(view_list, trans_collection, '1246', frame_id = frame)
         # scene.rotate_90()
         scene_list.append(scene)
-    save_re10k_data(scene_list, scene_cam_list, 'data/re10k', sample_num=5)
+    save_re10k_data(scene_list, scene_cam_list, '/scratch/projects/fouheylab/dma9300/recon3d/data/re10k', sample_num=5)

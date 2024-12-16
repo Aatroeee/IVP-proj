@@ -15,3 +15,4 @@ tmp_dense/
 
 # ignore all submodule
 mast3r/
+data_point_clouds/

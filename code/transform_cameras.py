@@ -31,7 +31,7 @@ def trans_mat_mul(root_path, a_id, b_id, c_id):
 
 
 if __name__ =="__main__":
-    trans_path = 'data/output_data_calib_pnpr2d2'
+    trans_path = 'data/output_data'
     target_id = '1246'
     raw_cam_list = list(cam_series.keys())
     cali_cam_list = camera_set[0] # have xxx_to_1246 directly
